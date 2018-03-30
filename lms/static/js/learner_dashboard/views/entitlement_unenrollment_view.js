@@ -22,11 +22,15 @@ class EntitlementUnenrollmentView extends Backbone.View {
     this.triggerSelector = '.js-entitlement-action-unenroll';
     this.mainPageSelector = '#dashboard-main';
     this.genericErrorMsg = gettext('Your unenrollment request could not be processed. Please try again later.');
+    this.modalId = `#${this.$el.attr('id')}`;
 
     this.dashboardPath = options.dashboardPath;
     this.signInPath = options.signInPath;
+    this.browseCourses = options.browseCourses;
+    this.isEdx = options.isEdx;
 
     this.$submitButton = $(this.submitButtonSelector);
+    this.$closeButton = $(this.closeButtonSelector);
     this.$headerText = $(this.headerTextSelector);
     this.$errorText = $(this.errorTextSelector);
 
@@ -113,12 +117,65 @@ class EntitlementUnenrollmentView extends Backbone.View {
     this.$submitButton.data('entitlementApiEndpoint', apiEndpoint);
   }
 
+  switchToSlideOne() {
+    // Randomize survey option order
+    const survey = document.querySelector('.options');
+    for (let i = survey.children.length - 1; i >= 0; i -= 1) {
+      survey.appendChild(survey.children[Math.trunc(Math.random() * i)]);
+    }
+    console.log('in switch to slide1')
+    console.log('grabbing inner header: ', this.$('.entitlement-unenrollment-modal-inner-wrapper header'))
+    this.$('.entitlement-unenrollment-modal-inner-wrapper header').hide();
+    this.$('.entitlement-unenrollment-modal-submit-wrapper').hide();
+    this.$('.slide1').removeClass('hidden');
+
+    this.reTrapFocusForModal();
+  }
+
+  switchToSlideTwo() {
+    let reason = this.$(".reasons_survey input[name='reason']:checked").attr('val');
+    if (reason === 'Other') {
+      reason = this.$('.other_text').val();
+    }
+    if (reason) {
+      window.analytics.track('entitlement_unenrollment_reason.selected', {
+        category: 'user-engagement',
+        label: reason,
+        displayName: 'v1',
+      });
+    }
+    this.$('.slide1').addClass('hidden');
+    this.$('.slide2').removeClass('hidden');
+    this.$('.reasons_survey .return_to_dashboard').attr('href', this.dashboardPath);
+    this.$('.reasons_survey .browse_courses').attr('href', this.browseCourses);
+
+    this.reTrapFocusForModal();
+  }
+
+  reTrapFocusForModal(){
+    // Reindex which items should be focusable, methods from accessibility_tools.js
+    const focusableItems = _adjust_tabindexes_and_aria_hidden(
+      window.focusableElementsString,
+      this.closeButtonSelector,
+      this.modalId,
+      this.mainPageSelector
+    );
+    const $last = _trap_tab_focus(focusableItems, this.closeButtonSelector);
+    _trap_shift_tab_focus(this.closeButtonSelector, $last);
+    _bind_escape_key_listener(this.modalId, this.closeButtonSelector);
+  }
+
   onComplete(xhr) {
     const status = xhr.status;
     const message = xhr.responseJSON && xhr.responseJSON.detail;
 
     if (status === 204) {
-      EntitlementUnenrollmentView.redirectTo(this.dashboardPath);
+      if (this.isEdx) {
+        this.switchToSlideOne();
+        this.$('.reasons_survey:first .submit_reasons').click(this.switchToSlideTwo.bind(this));
+      } else {
+        EntitlementUnenrollmentView.redirectTo(this.dashboardPath);
+      }
     } else if (status === 401 && message === 'Authentication credentials were not provided.') {
       EntitlementUnenrollmentView.redirectTo(`${this.signInPath}?next=${encodeURIComponent(this.dashboardPath)}`);
     } else {

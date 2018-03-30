@@ -35,6 +35,77 @@ ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 var $focusedElementBeforeModal;
 
+var _adjust_tabindexes_and_aria_hidden = function(focusableElementsString, closeButtonId, modalId, mainPageId ){
+    // Sets appropriate elements to tab indexable and properly sets aria_hidden on content outside of modal
+    // "focusableElementsString" is a string that indicates all elements that should be focusable
+    // "closeButtonId" is the selector for the button that closes out the modal.
+    // "mainPageId" is the selector for the main part of the page
+    // "modalId" is the selector for the modal being managed
+    // 
+    // Returns a list of focusableItems
+
+    $(mainPageId).attr('aria-hidden', 'true');
+    $(modalId).attr('aria-hidden', 'false');
+
+    var focusableItems = $(modalId).find('*').filter(focusableElementsString).filter(':visible');
+
+    focusableItems.attr('tabindex', '2');
+    $(closeButtonId).attr('tabindex', '1');
+    $(closeButtonId).focus();
+
+    return focusableItems;
+}
+
+var _trap_tab_focus = function(focusableItems, closeButtonId){
+    // Determines last element in modal and traps focus by causing tab 
+    // to focus on the first modal element (close button)
+    // "focusableItems" all elements in the modal that are focusable
+    // "closeButtonId" is the selector for the button that closes out the modal.
+    // returns the last focusable element in the modal.
+    var $last;
+    if (focusableItems.length !== 0) {
+        $last = focusableItems.last();
+    } else {
+        $last = $(closeButtonId);
+    }
+
+    // tab on last element in modal returns to the first one
+    $last.on('keydown', function(e) {
+        var keyCode = e.keyCode || e.which;
+        // 9 is the js keycode for tab
+        if (!e.shiftKey && keyCode === 9) {
+            e.preventDefault();
+            $(closeButtonId).focus();
+        }
+    });
+
+    return $last;
+}
+
+var _trap_shift_tab_focus = function(closeButtonId, $last){
+    $(closeButtonId).on('keydown', function(e) {
+        var keyCode = e.keyCode || e.which;
+        // 9 is the js keycode for tab
+        if (e.shiftKey && keyCode == 9) {
+            e.preventDefault();
+            $last.focus();
+        }
+    });  
+}
+
+var _bind_escape_key_listener = function(modalId, closeButtonId){
+    $(modalId).on('keydown', function(e) {
+        var keyCode = e.keyCode || e.which;
+        // 27 is the javascript keycode for the ESC key
+        if (keyCode === 27) {
+            e.preventDefault();
+            $(closeButtonId).click();
+        }
+    });
+}
+
+var focusableElementsString = 'a[href], area[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled]), iframe, object, embed, *[tabindex], *[contenteditable]';
+
 var accessible_modal = function(trigger, closeButtonId, modalId, mainPageId) {
   // Modifies a lean modal to optimize focus management.
   // "trigger" is the selector for the link element that triggers the modal.
@@ -47,70 +118,25 @@ var accessible_modal = function(trigger, closeButtonId, modalId, mainPageId) {
   // see http://accessibility.oit.ncsu.edu/blog/2013/09/13/the-incredible-accessible-modal-dialog/
   // for more information on managing modals
   //
-    var focusableElementsString = 'a[href], area[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled]), iframe, object, embed, *[tabindex], *[contenteditable]';
-
     $(trigger).click(function() {
         $focusedElementBeforeModal = $(trigger);
 
-    // when modal is opened, adjust tabindexes and aria-hidden attributes
-        $(mainPageId).attr('aria-hidden', 'true');
-        $(modalId).attr('aria-hidden', 'false');
+        // when modal is opened, adjust tabindexes and aria-hidden attributes
+        var focusableItems = _adjust_tabindexes_and_aria_hidden(focusableElementsString, closeButtonId, modalId, mainPageId);
 
-        var focusableItems = $(modalId).find('*').filter(focusableElementsString).filter(':visible');
+        // tab on last element in modal returns to the first one
+        var $last = _trap_tab_focus(focusableItems, closeButtonId);
 
-        focusableItems.attr('tabindex', '2');
-        $(closeButtonId).attr('tabindex', '1');
-        $(closeButtonId).focus();
+        // shift+tab on first element in modal returns to the last one
+        _trap_shift_tab_focus(closeButtonId, $last);
 
-    // define the last tabbable element to complete tab cycle
-        var $last;
-        if (focusableItems.length !== 0) {
-            $last = focusableItems.last();
-        } else {
-            $last = $(closeButtonId);
-        }
+        // get modal to exit on escape key
+        _bind_escape_key_listener(modalId, closeButtonId);
 
-    // tab on last element in modal returns to the first one
-        $last.on('keydown', function(e) {
-            var keyCode = e.keyCode || e.which;
-      // 9 is the js keycode for tab
-            if (!e.shiftKey && keyCode === 9) {
-                e.preventDefault();
-                $(closeButtonId).focus();
-            }
-        });
-
-    // shift+tab on first element in modal returns to the last one
-        $(closeButtonId).on('keydown', function(e) {
-            var keyCode = e.keyCode || e.which;
-      // 9 is the js keycode for tab
-            if (e.shiftKey && keyCode == 9) {
-                e.preventDefault();
-                $last.focus();
-            }
-        });
-
-    // manage aria-hidden attrs, return focus to trigger on close
-        $('#lean_overlay, ' + closeButtonId).click(function() {
-            $(mainPageId).attr('aria-hidden', 'false');
-            $(modalId).attr('aria-hidden', 'true');
-            $focusedElementBeforeModal.focus();
-        });
-
-    // get modal to exit on escape key
-        $(modalId).on('keydown', function(e) {
-            var keyCode = e.keyCode || e.which;
-      // 27 is the javascript keycode for the ESC key
-            if (keyCode === 27) {
-                e.preventDefault();
-                $(closeButtonId).click();
-            }
-        });
-
-    // In IE, focus shifts to iframes when they load.
-    // These lines ensure that focus is shifted back to the close button
-    // in the case that a modal that contains an iframe is opened in IE.
-    // see http://stackoverflow.com/questions/15792620/how-to-get-focus-back-for-parent-window-from-an-iframe-programmatically-in-javas
+        // In IE, focus shifts to iframes when they load.
+        // These lines ensure that focus is shifted back to the close button
+        // in the case that a modal that contains an iframe is opened in IE.
+        // see http://stackoverflow.com/questions/15792620/how-to-get-focus-back-for-parent-window-from-an-iframe-programmatically-in-javas
         var initialFocus = true;
         $(modalId).find('iframe').on('focus', function() {
             if (initialFocus) {
