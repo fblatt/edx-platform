@@ -11,7 +11,21 @@ from django.core.urlresolvers import reverse
 from django.conf import settings
 from django.utils.http import urlquote_plus
 from six import text_type
+
+from openedx.features.enterprise_support import api
 %>
+
+<%
+# Temporary solution: if this is an Enterprise user, their display name is temporarily `${enterprise.name}Learner`.
+# A more complete solution is in the works to have a dedicated `displayname` field.
+enterprise_customer = api.enterprise_customer_for_request(request)
+username = (
+    enterprise_customer['name'] + 'Learner'
+    if enterprise_customer and enterprise_customer['replace_sensitive_sso_username']
+    else student.username
+)
+%>
+
 <%block name="bodyclass">view-in-course view-progress</%block>
 
 <%block name="headextra">
@@ -54,7 +68,7 @@ from six import text_type
                 </div>
                 % endif
                 <h2 class="hd hd-2 progress-certificates-title">
-                    ${_("Course Progress for Student '{username}' ({email})").format(username=student.username, email=student.email)}
+                    ${_("Course Progress for Student '{username}' ({email})").format(username=username, email=student.email)}
                 </h2>
 
                 <div class="wrapper-msg wrapper-auto-cert">

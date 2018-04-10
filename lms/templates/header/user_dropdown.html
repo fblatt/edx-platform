@@ -2,26 +2,31 @@
 <%page expression_filter="h"/>
 <%namespace name='static' file='static_content.html'/>
 
-## This template should not use the target student's details when masquerading, see TNL-4895
-<%
-self.real_user = getattr(user, 'real_user', user)
-%>
-
 <%!
 from django.core.urlresolvers import reverse
 from django.utils.translation import ugettext as _
 
 from openedx.core.djangoapps.user_api.accounts.image_helpers import get_profile_image_urls_for_user
 from openedx.core.djangoapps.user_api.accounts.utils import retrieve_last_sitewide_block_completed
-
+from openedx.features.enterprise_support import api
 %>
 
 <%
-    profile_image_url = get_profile_image_urls_for_user(self.real_user)['medium']
-    username = self.real_user.username
-    resume_block = retrieve_last_sitewide_block_completed(username)
-%>
+## This template should not use the target student's details when masquerading, see TNL-4895
+self.real_user = getattr(user, 'real_user', user)
+profile_image_url = get_profile_image_urls_for_user(self.real_user)['medium']
+username = self.real_user.username
+resume_block = retrieve_last_sitewide_block_completed(username)
 
+# Temporary solution: if this is an Enterprise user, their display name is temporarily `${enterprise.name}Learner`.
+# A more complete solution is in the works to have a dedicated `displayname` field.
+enterprise_customer = api.enterprise_customer_for_request(request)
+username = (
+    enterprise_customer['name'] + 'Learner'
+    if enterprise_customer and enterprise_customer['replace_sensitive_sso_username']
+    else username
+)
+%>
 
 <div class="nav-item hidden-mobile">
     <a href="${reverse('dashboard')}" class="menu-title">
