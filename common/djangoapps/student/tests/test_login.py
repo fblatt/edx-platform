@@ -638,3 +638,42 @@ class LoginOAuthTokenTestFacebook(LoginOAuthTokenMixin, ThirdPartyOAuthTestMixin
 class LoginOAuthTokenTestGoogle(LoginOAuthTokenMixin, ThirdPartyOAuthTestMixinGoogle, TestCase):
     """Tests login_oauth_token with the Google backend"""
     pass
+
+
+class TestPasswordVerificationView(CacheIsolationTestCase):
+    """
+    Test the password verification endpoint.
+    """
+    def setUp(self):
+        super(TestPasswordVerificationView, self).setUp()
+        self.user = UserFactory.build(username='test_user')
+        self.password = 'test_password'
+        self.user.set_password(self.password)
+        self.user.save()
+        # Create a registration for the user
+        RegistrationFactory(user=self.user)
+
+        # Create a profile for the user
+        UserProfileFactory(user=self.user)
+
+        # Create the test client
+        self.client = Client()
+        cache.clear()
+        self.url = reverse('verify_password')
+
+    def test_password_logged_in_valid(self):
+        success = self.client.login(username=self.user.username, password=self.password)
+        assert success
+        response = self.client.post(self.url, {'password': self.password})
+
+        assert response.status_code == 200
+
+    def test_password_logged_in_invalid(self):
+        success = self.client.login(username=self.user.username, password=self.password)
+        assert success
+        response = self.client.post(self.url, {'password': 'wrong_password'})
+        assert response.status_code == 403
+
+    def test_password_logged_out(self):
+        response = self.client.post(self.url, {'username': self.user.username, 'password': self.password})
+        assert response.status_code == 403

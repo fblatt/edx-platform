@@ -387,6 +387,28 @@ def send_reactivation_email_for_user(user):
 
 
 @ensure_csrf_cookie
+def verify_user_password(request):
+    """
+    If the user is logged in and we want to verify that they have submitted the correct password
+    for a major account change (for example, deleting this user account).
+
+    Args:
+        request (HttpRequest): A request object where the password should be included in the POST fields.
+    """
+    # TODO: Use the rate limiting code from above.
+    try:
+        log.info('username: %r', request.user.username)
+        user = authenticate(username=request.user.username, password=request.POST['password'], request=request)
+        if user:
+            return JsonResponse({'success': True})
+        else:
+            return HttpResponseForbidden(_('Password is incorrect.'))
+    except Exception:  # pylint: disable=broad-except
+        log.exception("Could not verify user password")
+        return HttpResponseBadRequest()
+
+
+@ensure_csrf_cookie
 def login_user(request):
     """
     AJAX request to log in the user.
