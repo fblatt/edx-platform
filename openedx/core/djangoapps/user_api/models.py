@@ -1,10 +1,12 @@
 """
 Django ORM model specifications for the User API application
 """
+from django.conf import settings
 from django.contrib.auth.models import User
 from django.core.validators import RegexValidator
 from django.db import models
 from django.db.models.signals import post_delete, post_save, pre_save
+from django.forms.models import model_to_dict
 from django.dispatch import receiver
 from model_utils.models import TimeStampedModel
 from opaque_keys.edx.django.models import CourseKeyField
@@ -17,6 +19,10 @@ from opaque_keys.edx.django.models import CourseKeyField
 # create an alias in "user_api".
 from student.models import PendingEmailChange, Registration, UserProfile  # pylint: disable=unused-import
 from util.model_utils import emit_setting_changed_event, get_changed_fields_dict
+
+
+class RetirementStateError(Exception):
+    pass
 
 
 class UserPreference(models.Model):
@@ -110,7 +116,8 @@ class UserCourseTag(models.Model):
 
 
 class UserOrgTag(TimeStampedModel):
-    """ Per-Organization user tags.
+    """
+    Per-Organization user tags.
 
     Allows settings to be configured at an organization level.
 
@@ -122,3 +129,72 @@ class UserOrgTag(TimeStampedModel):
 
     class Meta(object):
         unique_together = ("user", "org", "key")
+
+
+class RetirementStatus(TimeStampedModel):
+    """
+    Tracks the progress of a user's retirement request
+    """
+    user = models.OneToOneField(User)
+    username = models.CharField(max_length=150, db_index=True)
+    email = models.EmailField(db_index=True)
+    current_state = models.CharField(max_length=25, choices=settings.RETIREMENT_STATES)
+    last_state = models.CharField(max_length=25, choices=settings.RETIREMENT_STATES, blank=True)
+    responses = models.TextField()
+
+    def _validate_state_update(self, new_state):
+        """
+        Confirm that the state move that's trying to be made is allowed
+        """
+        if self.current_state in settings.RETIREMENT_DEAD_END_STATES:
+            raise RetirementStateError('RetirementStatus: Unable to move user from {}'.format(self.current_state))
+
+        try:
+            new_state_index = settings.RETIREMENT_STATES_FLAT.index(new_state)
+            if new_state_index <= settings.RETIREMENT_STATES_FLAT.index(self.current_state):
+                raise ValueError()
+        except ValueError:
+            err = '{} does not exist or is an eariler state than current state {}'.format(new_state, self.current_state)
+            raise RetirementStateError(err)
+
+    def _validate_update_data(self, data):
+        """
+        Confirm that the data passed in is properly formatted
+        """
+        required_keys = ('username', 'new_state', 'response')
+
+        for required_key in required_keys:
+            if required_key not in data:
+                raise RetirementStateError('RetirementStatus: Required key {} missing from update'.format(required_key))
+
+        for key in data:
+            if key not in required_keys:
+                raise RetirementStateError('RetirementStatus: Unknown key {} in update'.format(key))
+
+    def update_state(self, update):
+        """
+        Perform the necessary checks for a state change and update the state and response if passed
+        or throw a RetirementStateError with a useful error message
+        """
+        self._validate_update_data(update)
+        self._validate_state_update(update['new_state'])
+
+        old_state = self.current_state
+        self.current_state = update['new_state']
+        self.last_state = old_state
+        self.responses += "\n Moved from {} to {}:\n{}\n".format(old_state, self.current_state, update['response'])
+        self.save()
+
+    def to_dict(self, all_fields=False):
+        """
+        Return a dict format of this model to a consistent format for serialization, removing the long text field
+        `responses` for performance reasons.
+        """
+        retirement_dict = model_to_dict(self)
+        retirement_dict['current_username'] = self.user.username
+        retirement_dict['current_email'] = self.user.email
+
+        if not all_fields:
+            del retirement_dict['responses']
+
+        return retirement_dict

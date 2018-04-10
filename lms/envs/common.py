@@ -3413,6 +3413,42 @@ RETIRED_USERNAME_FMT = 'retired__user_{}'
 RETIRED_EMAIL_FMT = 'retired__user_{}@retired.invalid'
 RETIRED_USER_SALTS = ['abc', '123']
 RETIREMENT_SERVICE_WORKER_USERNAME = 'RETIREMENT_SERVICE_USER'
+RETIREMENT_STATES = [
+    ('PENDING', 'PENDING'),  # received, but not yet started
+
+    ('LOCKING_ACCOUNT', 'LOCKING_ACCOUNT'),
+    ('LOCKING_COMPLETE', 'LOCKING_COMPLETE'),
+
+    ('RETIRING_CREDENTIALS', 'RETIRING_CREDENTIALS'),
+    ('CREDENTIALS_COMPLETE', 'CREDENTIALS_COMPLETE'),
+
+    ('RETIRING_ECOM', 'RETIRING_ECOM'),
+    ('ECOM_COMPLETE', 'ECOM_COMPLETE'),
+
+    ('RETIRING_FORUMS', 'RETIRING_FORUMS'),
+    ('FORUMS_COMPLETE', 'FORUMS_COMPLETE'),
+
+    ('RETIRING_EMAIL_LISTS', 'RETIRING_EMAIL_LISTS'),
+    ('EMAIL_LISTS_COMPLETE', 'EMAIL_LISTS_COMPLETE'),
+
+    ('RETIRING_ENROLLMENTS', 'RETIRING_ENROLLMENTS'),
+    ('ENROLLMENTS_COMPLETE', 'ENROLLMENTS_COMPLETE'),
+
+    ('RETIRING_NOTES', 'RETIRING_NOTES'),
+    ('NOTES_COMPLETE', 'NOTES_COMPLETE'),
+
+    ('NOTIFYING_PARTNERS', 'NOTIFYING_PARTNERS'),
+    ('PARTNERS_NOTIFIED', 'PARTNERS_NOTIFIED'),
+
+    ('RETIRING_LMS', 'RETIRING_LMS'),
+    ('LMS_COMPLETE', 'LMS_COMPLETE'),
+
+    ('ERRORED', 'ERRORED'),  # a step in the process has failed, can be restarted or retried from last step
+    ('ABORTED', 'ABORTED'),  # cancelled by the user or admin, ex. fraudulently entered or changed their mind
+    ('COMPLETE', 'COMPLETE'),  # all steps finished
+]
+RETIREMENT_STATES_FLAT = [_state[0] for _state in RETIREMENT_STATES]
+RETIREMENT_DEAD_END_STATES = ['ERRORED', 'ABORTED', 'COMPLETE']
 
 ############### Settings for django-fernet-fields ##################
 FERNET_KEYS = [

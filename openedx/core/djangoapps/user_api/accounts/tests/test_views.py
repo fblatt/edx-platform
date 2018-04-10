@@ -23,7 +23,7 @@ from rest_framework.test import APIClient, APITestCase
 
 from openedx.core.djangoapps.user_api.accounts import ACCOUNT_VISIBILITY_PREF_KEY
 from openedx.core.djangoapps.user_api.accounts.signals import USER_RETIRE_MAILINGS
-from openedx.core.djangoapps.user_api.models import UserPreference, UserOrgTag
+from openedx.core.djangoapps.user_api.models import RetirementStatus, UserPreference, UserOrgTag
 from openedx.core.djangoapps.user_api.preferences.api import set_user_preference
 from openedx.core.djangolib.testing.utils import CacheIsolationTestCase, skip_unless_lms
 from openedx.core.lib.token_utils import JwtBuilder
@@ -938,6 +938,10 @@ class TestAccountRetireMailings(TestCase):
 
         self.url = reverse('accounts_retire_mailings', kwargs={'username': self.test_user.username})
 
+    def build_post(self, user):
+        retired_username = get_retired_username_by_username(user.username)
+        return {'retired_username': retired_username}
+
     def build_jwt_headers(self, user):
         """
         Helper function for creating headers for the JWT authentication.
@@ -947,10 +951,6 @@ class TestAccountRetireMailings(TestCase):
             'HTTP_AUTHORIZATION': 'JWT ' + token
         }
         return headers
-
-    def build_post(self, user):
-        retired_username = get_retired_username_by_username(user.username)
-        return {'retired_username': retired_username}
 
     def assert_status_and_tag_count(self, headers, expected_status=status.HTTP_204_NO_CONTENT, expected_tag_count=2,
                                     expected_tag_value="False", expected_content=None):
@@ -1012,3 +1012,255 @@ class TestAccountRetireMailings(TestCase):
             )
         finally:
             USER_RETIRE_MAILINGS.disconnect(mock_handler)
+
+
+class RetirementTestCase(TestCase):
+    """
+    Test case with a helper method for getting JWT headers
+    """
+
+    def build_jwt_headers(self, user):
+        """
+        Helper function for creating headers for the JWT authentication.
+        """
+        token = JwtBuilder(user).build_token([])
+        headers = {
+            'HTTP_AUTHORIZATION': 'JWT ' + token
+        }
+        return headers
+
+    def create_retirement(self, state):
+        user = UserFactory()
+        return RetirementStatus.objects.create(
+            user=user,
+            username=user.username,
+            email=user.email,
+            current_state=state,
+            last_state="",
+            responses=""
+        )
+
+
+@unittest.skipUnless(settings.ROOT_URLCONF == 'lms.urls', 'Account APIs are only supported in LMS')
+class TestAccountRetirementList(RetirementTestCase):
+    """
+    Tests the account retirement endpoint.
+    """
+
+    def setUp(self):
+        super(TestAccountRetirementList, self).setUp()
+        self.test_superuser = SuperuserFactory()
+        self.headers = self.build_jwt_headers(self.test_superuser)
+        self.url = reverse('accounts_retirement_list')
+
+    def assert_status_and_user_list(self, expected_data, expected_status=status.HTTP_200_OK):
+        """
+        Helper function for making a request to the retire subscriptions endpoint, and asserting the status.
+        """
+        response = self.client.get(self.url, **self.headers)
+        self.assertEqual(response.status_code, expected_status)
+        self.assertItemsEqual(response.json(), expected_data)
+
+    def test_empty(self):
+        """
+        Verify that an empty array is returned if no users are awaiting retirement
+        """
+        self.assert_status_and_user_list([])
+
+    def test_users_exist_none_in_correct_status(self):
+        """
+        Verify that users in dead end states are not returned
+        """
+        for state in settings.RETIREMENT_DEAD_END_STATES:
+            self.create_retirement(state)
+
+        self.assert_status_and_user_list([])
+
+    def test_users_exist(self):
+        """
+        Verify users in non-dead end states are returned with correct data
+        """
+        self.maxDiff = None
+        retirements = []
+        retirement_values = []
+
+        for state in settings.RETIREMENT_STATES:
+            retirements.append(self.create_retirement(state[0]))
+
+        for retirement in retirements:
+            if retirement.current_state not in settings.RETIREMENT_DEAD_END_STATES:
+                retirement_values.append(retirement.to_dict())
+
+        self.assert_status_and_user_list(retirement_values)
+
+
+@unittest.skipUnless(settings.ROOT_URLCONF == 'lms.urls', 'Account APIs are only supported in LMS')
+class TestAccountRetirementRetrieve(RetirementTestCase):
+    """
+    Tests the account retirement endpoint.
+    """
+    def setUp(self):
+        super(TestAccountRetirementRetrieve, self).setUp()
+        self.test_user = UserFactory()
+        self.test_superuser = SuperuserFactory()
+        self.url = reverse('accounts_retirement_retrieve', kwargs={'username': self.test_user.username})
+        self.headers = self.build_jwt_headers(self.test_superuser)
+
+    def assert_status_and_user_data(self, expected_data, expected_status=status.HTTP_200_OK, username_to_find=None):
+        """
+        Helper function for making a request to the retire subscriptions endpoint, and asserting the status.
+        """
+        if username_to_find is not None:
+            self.url = reverse('accounts_retirement_retrieve', kwargs={'username': username_to_find})
+
+        response = self.client.get(self.url, **self.headers)
+        self.assertEqual(response.status_code, expected_status)
+
+        if expected_data is not None:
+            self.assertEqual(response.json(), expected_data)
+
+    def test_no_retirement(self):
+        """
+        Confirm we get a 404 if a retirement for the user can be found
+        """
+        self.assert_status_and_user_data(None, status.HTTP_404_NOT_FOUND)
+
+    def test_retirements_all_states(self):
+        """
+        Create a bunch of retirements and confirm we get back the correct data for each
+        """
+        retirements = []
+
+        for state, _ in settings.RETIREMENT_STATES:
+            retirements.append(self.create_retirement(state))
+
+        for retirement in retirements:
+            values = retirement.to_dict()
+            self.assert_status_and_user_data(values, username_to_find=values['username'])
+
+    def test_retrieve_by_old_username(self):
+        """
+        Simulate retrieving a retirement by the old username, after the name has been changed to the hashed one
+        """
+        retirement = self.create_retirement('PENDING')
+        original_username = retirement.user.username
+        values = retirement.to_dict()
+
+        hashed_username = get_retired_username_by_username(original_username)
+        values['current_username'] = hashed_username
+        retirement.user.username = hashed_username
+        retirement.user.save()
+
+        # Should force us to find the old username
+        self.assert_status_and_user_data(values, username_to_find=original_username)
+
+
+@unittest.skipUnless(settings.ROOT_URLCONF == 'lms.urls', 'Account APIs are only supported in LMS')
+class TestAccountRetirementUpdate(RetirementTestCase):
+    """
+    Tests the account retirement endpoint.
+    """
+    def setUp(self):
+        super(TestAccountRetirementUpdate, self).setUp()
+        self.retirement = self.create_retirement('PENDING')
+        self.test_user = self.retirement.user
+        self.test_superuser = SuperuserFactory()
+        self.headers = self.build_jwt_headers(self.test_superuser)
+        self.headers['content_type'] = "application/merge-patch+json"
+        self.url = reverse('accounts_retirement_update')
+
+    def update_and_assert_status(self, data, expected_status=status.HTTP_204_NO_CONTENT):
+        """
+        Helper function for making a request to the retire subscriptions endpoint, and asserting the status.
+        """
+        if 'username' not in data:
+            data['username'] = self.test_user.username
+
+        response = self.client.patch(self.url, json.dumps(data), **self.headers)
+        self.assertEqual(response.status_code, expected_status)
+
+    def test_single_update(self):
+        """
+        Basic test to confirm changing state works
+        """
+        data = {'new_state': 'LOCKING_ACCOUNT', 'response': 'this should succeed'}
+        self.update_and_assert_status(data)
+
+        # Refresh the retirment object and confirm the messages and state are correct
+        retirement = RetirementStatus.objects.get(id=self.retirement.id)
+        self.assertEqual(retirement.current_state, 'LOCKING_ACCOUNT')
+        self.assertEqual(retirement.last_state, 'PENDING')
+        self.assertIn('this should succeed', retirement.responses)
+
+    def test_move_through_process(self):
+        """
+        Simulate moving a retirement through the process and confirm they end up in the
+        correct state, with all relevant response messages logged.
+        """
+        fake_retire_process = [
+            {'new_state': 'LOCKING_ACCOUNT', 'response': 'accountlockstart'},
+            {'new_state': 'LOCKING_COMPLETE', 'response': 'accountlockcomplete'},
+            {'new_state': 'RETIRING_CREDENTIALS', 'response': 'retiringcredentials'},
+            {'new_state': 'CREDENTIALS_COMPLETE', 'response': 'credentialsretired'},
+            {'new_state': 'COMPLETE', 'response': 'accountretirementcomplete'},
+        ]
+
+        for update_data in fake_retire_process:
+            self.update_and_assert_status(update_data)
+
+        # Refresh the retirment object and confirm the messages and state are correct
+        retirement = RetirementStatus.objects.get(id=self.retirement.id)
+        self.assertEqual(retirement.current_state, 'COMPLETE')
+        self.assertEqual(retirement.last_state, 'CREDENTIALS_COMPLETE')
+        self.assertIn('accountlockstart', retirement.responses)
+        self.assertIn('accountlockcomplete', retirement.responses)
+        self.assertIn('retiringcredentials', retirement.responses)
+        self.assertIn('credentialsretired', retirement.responses)
+        self.assertIn('accountretirementcomplete', retirement.responses)
+
+    def test_unknown_state(self):
+        """
+        Test that trying to set to an unknown state fails with a 400
+        """
+        data = {'new_state': 'BOGUS_STATE', 'response': 'this should fail'}
+        self.update_and_assert_status(data, status.HTTP_400_BAD_REQUEST)
+
+    def test_bad_vars(self):
+        """
+        Test various ways of sending the wrong variables to make sure they all fail correctly
+        """
+        data = {'response': 'this should fail'}
+        self.update_and_assert_status(data, status.HTTP_400_BAD_REQUEST)
+
+        data = {'new_state': 'BOGUS_STATE', 'response': 'this should fail'}
+        self.update_and_assert_status(data, status.HTTP_400_BAD_REQUEST)
+
+        data = {}
+        self.update_and_assert_status(data, status.HTTP_400_BAD_REQUEST)
+
+        data = {'should_not_exist': 'bad', 'new_state': 'COMPLETE', 'response': 'this should fail'}
+        self.update_and_assert_status(data, status.HTTP_400_BAD_REQUEST)
+
+    def test_no_retirement(self):
+        """
+        Confirm that trying to operate on a non-existent retirement for an existing user 404s
+        """
+        # Delete the only retirement, created in setUp
+        RetirementStatus.objects.all().delete()
+        data = {'new_state': 'LOCKING_ACCOUNT', 'response': 'this should fail'}
+        self.update_and_assert_status(data, status.HTTP_404_NOT_FOUND)
+
+    def test_no_user(self):
+        """
+        Confirm that trying to operate on a non-existent user 404s
+        """
+        data = {'new_state': 'LOCKING_ACCOUNT', 'response': 'this should fail', 'username': 'does not exist'}
+        self.update_and_assert_status(data, status.HTTP_404_NOT_FOUND)
+
+    def test_move_from_dead_end(self):
+        """
+        Confirm that trying to move from a dead end state to any other state fails
+        """
+        RetirementStatus.objects.filter(id=self.retirement.id).update(current_state=settings.RETIREMENT_DEAD_END_STATES[0])
+        data = {'new_state': 'LOCKING_ACCOUNT', 'response': 'this should fail'}
+        self.update_and_assert_status(data, status.HTTP_400_BAD_REQUEST)

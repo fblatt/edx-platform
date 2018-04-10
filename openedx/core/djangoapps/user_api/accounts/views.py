@@ -5,6 +5,7 @@ For additional information and historical context, see:
 https://openedx.atlassian.net/wiki/display/TNL/User+API
 """
 
+from django.conf import settings
 from django.db import transaction
 from django.contrib.auth import get_user_model
 from edx_rest_framework_extensions.authentication import JwtAuthentication
@@ -21,13 +22,17 @@ from openedx.core.lib.api.authentication import (
     OAuth2AuthenticationAllowInactiveUser,
 )
 from openedx.core.lib.api.parsers import MergePatchParser
-from student.models import User, get_potentially_retired_user_by_username_and_hash
+from student.models import (
+    User,
+    get_potentially_retired_user_by_username_and_hash,
+    get_potentially_retired_user_by_username
+)
 
 from .api import get_account_settings, update_account_settings
 from .permissions import CanDeactivateUser, CanRetireUser
 from .signals import USER_RETIRE_MAILINGS
 from ..errors import UserNotFound, UserNotAuthorized, AccountUpdateError, AccountValidationError
-from ..models import UserOrgTag
+from ..models import UserOrgTag, RetirementStateError, RetirementStatus
 
 
 class AccountViewSet(ViewSet):
@@ -294,3 +299,63 @@ class AccountRetireMailingsView(APIView):
             return Response(text_type(exc), status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class AccountRetirementView(ViewSet):
+    """
+    Provides API endpoints for managing the user retirement process.
+    """
+    authentication_classes = (JwtAuthentication,)
+    permission_classes = (permissions.IsAuthenticated, CanRetireUser, )
+    parser_classes = (MergePatchParser, )
+
+    def list_for_retirement(self, request):
+        """
+        GET /api/user/v1/accounts/accounts_to_retire/
+        Returns the list of RetirementStatus users in statuses that
+        are acceptable to take action on.
+        """
+        retirements = RetirementStatus.objects.exclude(current_state__in=settings.RETIREMENT_DEAD_END_STATES)
+        return Response([ret.to_dict() for ret in retirements])
+
+    def retrieve(self, request, username):
+        """
+        GET /api/user/v1/accounts/{username}/retirement_status/
+        Returns the RetirementStatus of a given user, or 404 if that row
+        doesn't exist.
+        """
+        try:
+            user = get_potentially_retired_user_by_username(username)
+            retirement = RetirementStatus.objects.get(user=user)
+            return Response(retirement.to_dict())
+        except (RetirementStatus.DoesNotExist, User.DoesNotExist):
+            return Response(status=status.HTTP_404_NOT_FOUND)
+
+    def partial_update(self, request):
+        """
+        PATCH /api/user/v1/accounts/update_retirement_status/
+
+        {
+            'username': 'user_to_retire',
+            'new_state': 'LOCKING_COMPLETE',
+            'response': 'User account locked and logged out.'
+        }
+
+        Updates the RetirementStatus row for the given user to the new
+        status, and append any messages to the message log.
+
+        Note that this implementation is the "merge patch" implementation proposed in
+        https://tools.ietf.org/html/rfc7396. The content_type must be "application/merge-patch+json" or
+        else an error response with status code 415 will be returned.
+        """
+        try:
+            username = request.data['username']
+            retirement = RetirementStatus.objects.get(user__username=username)
+            retirement.update_state(request.data)
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        except RetirementStatus.DoesNotExist:
+            return Response(status=status.HTTP_404_NOT_FOUND)
+        except RetirementStateError:
+            return Response(status=status.HTTP_400_BAD_REQUEST)
+        except Exception as exc:  # pylint: disable=broad-except
+            return Response(text_type(exc), status=status.HTTP_500_INTERNAL_SERVER_ERROR)
