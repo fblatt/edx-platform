@@ -105,15 +105,18 @@ class CourseEntitlementPolicy(models.Model):
         """
         # If the Entitlement is expired already it is not refundable
         if entitlement.expired_at:
+            entitlement.set_unrefundable()
             return False
 
         # If there's no order number, it cannot be refunded
         if entitlement.order_number is None:
+            entitlement.set_unrefundable()
             return False
 
         # This is > because a get_days_since_created of refund_period means that that many days have passed,
         # which should then make the entitlement no longer refundable
         if entitlement.get_days_since_created() > self.refund_period.days:  # pylint: disable=no-member
+            entitlement.set_unrefundable()
             return False
 
         if entitlement.enrollment_course_run:
@@ -162,6 +165,7 @@ class CourseEntitlement(TimeStampedModel):
         blank=True
     )
     order_number = models.CharField(max_length=128, null=True)
+    is_refundable = models.BooleanField(default=True)
     _policy = models.ForeignKey(CourseEntitlementPolicy, null=True, blank=True)
 
     @property
@@ -226,7 +230,12 @@ class CourseEntitlement(TimeStampedModel):
         """
         Returns a boolean as to whether or not the entitlement can be refunded based on the entitlement's policy
         """
-        return self.policy.is_entitlement_refundable(self)
+        return self.is_refundable and self.policy.is_entitlement_refundable(self)
+
+    def set_unrefundable(self):
+        self.is_refundable = False
+        self.save()
+
 
     def is_entitlement_redeemable(self):
         """
@@ -428,7 +437,7 @@ class CourseEntitlementSupportDetail(TimeStampedModel):
         (CREATE, 'Create new entitlement'),
     )
 
-    entitlement = models.ForeignKey('entitlements.CourseEntitlement')
+    entitlement = models.ForeignKey('entitlements.CourseEntitlement', related_name='support_details')
     support_user = models.ForeignKey(settings.AUTH_USER_MODEL)
 
     #Deprecated: use action instead.

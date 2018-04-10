@@ -16,6 +16,7 @@ class CourseEntitlementSerializer(serializers.ModelSerializer):
         read_only=True
     )
     support_details = serializers.SerializerMethodField()
+    is_refundable = serializers.BooleanField(read_only=True)
 
     def get_support_details(self, model):
         """
@@ -35,6 +36,7 @@ class CourseEntitlementSerializer(serializers.ModelSerializer):
             'created',
             'modified',
             'mode',
+            'is_refundable',
             'order_number',
             'support_details'
         )

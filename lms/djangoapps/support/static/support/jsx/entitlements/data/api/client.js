@@ -25,6 +25,7 @@ const postEntitlement = ({ username, courseUuid, mode, action, comments = null }
       course_uuid: courseUuid,
       user: username,
       mode,
+      is_refundable: false,
       support_details: [{
         action,
         comments,
@@ -40,6 +41,7 @@ const patchEntitlement = ({ uuid, action, unenrolledRun = null, comments = null 
     headers: HEADERS,
     body: JSON.stringify({
       expired_at: null,
+      is_refundable: false,
       support_details: [{
         unenrolled_run: unenrolledRun,
         action,
