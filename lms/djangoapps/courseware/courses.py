@@ -593,3 +593,15 @@ def get_current_child(xmodule, min_depth=None, requested_child=None):
                 child = _get_default_child_module(children)
 
     return child
+
+
+def get_course_chapters(course_key):
+    """
+    Extracts the chapter block keys from a course structure.
+
+    Arguments:
+        course_key (CourseLocator): The course key
+    Returns:
+        list (string): The list of string representations of the chapter block keys in the course.
+    """
+    return [chapter.id for chapter in modulestore().get_items(course_key, qualifiers={'category': 'chapter'})]
