@@ -955,27 +955,23 @@ class VideoDescriptor(VideoFields, VideoTranscriptsMixin, VideoStudioViewHandler
         video_asset_elem = xml.find('video_asset')
         if video_asset_elem is None:
             video_asset_elem = etree.Element('video_asset')
-            video_asset_elem.set('duration', '0.0')
-            video_asset_elem.set('client_video_id', u'External Video')
 
         # This will be a dict containing the list of names of the external transcripts.
         # Example:
         # {
-        #     'en': ['The_Flash.srt'],
-        #     'es': ['Green_Arrow.srt', 'Harry_Potter.srt']
+        #     'en': ['The_Flash.srt', 'Harry_Potter.srt'],
+        #     'es': ['Green_Arrow.srt']
         # }
         external_transcripts = defaultdict(list)
 
         # Add trancript from self.sub and self.youtube_id_1_0 fields.
-        external_transcripts[self.transcript_language] = [
-            subs_filename(transcript, self.transcript_language)
+        external_transcripts['en'] = [
+            subs_filename(transcript, 'en')
             for transcript in [self.sub, self.youtube_id_1_0] if transcript
         ]
 
-        if self.transcripts:
-            for language_code, transcript in self.transcripts.items():
-                # If same language transcript already exists then attach this transcript.
-                external_transcripts[language_code].append(transcript)
+        for language_code, transcript in self.transcripts.items():
+            external_transcripts[language_code].append(transcript)
 
         if edxval_api:
             edx_video_id = edxval_api.import_from_xml(
